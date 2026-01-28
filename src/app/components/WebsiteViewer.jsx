@@ -7,6 +7,7 @@ export default function WebsiteViewer() {
     const [iframeContent, setIframeContent] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     const [editMode, setEditMode] = useState(false);
+    const [editModeVersion, setEditModeVersion] = useState(0);
     const [showCodeModal, setShowCodeModal] = useState(false);
     const [generatedCode, setGeneratedCode] = useState("");
     const iframeRef = useRef(null);
@@ -53,11 +54,22 @@ export default function WebsiteViewer() {
             const response = await fetch(
                 `/api/proxy?url=${encodeURIComponent(finalUrl)}`
             );
-            if (!response.ok) throw new Error("Failed to fetch");
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                // Use warn instead of throw to avoid React error overlay, but set UI to error state
+                console.warn(`Fetch warning for ${finalUrl}: ${response.status}`);
+                setIframeContent(
+                    `<div style="display:flex;justify-content:center;align-items:center;height:100%;font-family:sans-serif;color:#ef4444;flex-direction:column;gap:10px;">
+              <p style="font-size:18px;font-weight:bold;">Failed to load website.</p>
+              <p>Please check the URL or try another one.</p>
+            </div>`
+                );
+                return; // Stop execution
+            }
             const html = await response.text();
             setIframeContent(html);
         } catch (error) {
-            console.error("Load Error:", error);
+            console.warn("Load Error (Silent):", error);
             setIframeContent(
                 `<div style="display:flex;justify-content:center;align-items:center;height:100%;font-family:sans-serif;color:#ef4444;flex-direction:column;gap:10px;">
           <p style="font-size:18px;font-weight:bold;">Failed to load website.</p>
@@ -113,6 +125,62 @@ export default function WebsiteViewer() {
         }
     };
 
+    const handleCopyReact = () => {
+        const iframe = iframeRef.current;
+        if (!iframe) return;
+
+        try {
+            const doc = iframe.contentDocument || iframe.contentWindow.document;
+            if (!doc) {
+                alert("No content to copy.");
+                return;
+            }
+
+            // Get body content
+            let htmlContent = doc.body.innerHTML;
+
+            // Strategy Switch: Instead of fragile regex parsing, we will use dangerouslySetInnerHTML.
+            // This is the only robust way to render arbitrary HTML "A to Z" inside React
+            // without needing to regex-replace every single attribute (style strings, checked, selected, etc).
+            // This also solves the "Invalid JSON" / Syntax errors because we are passing a string literal.
+
+            // Escape backticks and standard JS string escapes for the generated code
+            // htmlContent = htmlContent.replace(/`/g, "\\`").replace(/\$/g, "\\$");
+
+            // Actually, best to JSON.stringify the string to ensure it's a valid string literal
+            // But we want it readable in the template.
+
+            // Let's use a simpler approach: pure string injection into dangerouslySetInnerHTML
+            // We need to be careful about backticks if we use template literals in the output.
+
+            const reactComponent = `import React from 'react';
+
+export default function GeneratedComponent() {
+  return (
+    <div 
+      dangerouslySetInnerHTML={{
+        __html: \`
+${htmlContent.replace(/`/g, "\\`").replace(/\${/g, "\\${")}
+        \`
+      }} 
+    />
+  );
+}`;
+
+            // Show code in modal instead of just copying (User Request: "react click panna react code irukanum")
+            setGeneratedCode(reactComponent);
+            setShowCodeModal(true);
+
+            // Optional: Auto-copy as well
+            // navigator.clipboard.writeText(reactComponent);
+            // alert("React code copied to clipboard!");
+
+        } catch (err) {
+            console.error("Error generating React code:", err);
+            alert("Failed to generate React code.");
+        }
+    };
+
     // Toggle Edit Logic
     useEffect(() => {
         const iframe = iframeRef.current;
@@ -123,51 +191,104 @@ export default function WebsiteViewer() {
                 const doc = iframe.contentDocument || iframe.contentWindow.document;
                 if (!doc) return;
 
-                if (editMode) {
-                    doc.body.setAttribute("contenteditable", "true");
-                    // Add handlers to all elements that might need specific editing
-                    const images = doc.getElementsByTagName("img");
-                    for (let img of images) {
-                        img.style.cursor = "pointer";
-                        img.style.border = "2px dashed #3b82f6";
-                        img.style.boxSizing = "border-box";
-                        img.onclick = (e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            const input = prompt(
-                                "Enter new Image URL, OR a Video URL (YouTube, Vimeo, MP4) to replace this image:",
-                                img.src
-                            );
+                // Define the click handler using Event Delegation
+                // This is more performant (one listener) and robust (catches dynamic elements and clicks inside links)
+                const handleEditClick = (e) => {
+                    const target = e.target;
+
+                    // Check if clicked element is media or wrapped in media
+                    // We also check closet to handle clicks on elements inside an anchor that wraps an image
+                    const mediaElement = target.closest('img, video, iframe');
+                    const linkElement = target.closest('a');
+
+                    // If it's a media element, hijack the click for editing
+                    if (mediaElement) {
+                        e.preventDefault();
+                        e.stopPropagation();
+
+                        // Highlight briefly to show selection
+                        const prevOutline = mediaElement.style.outline;
+                        mediaElement.style.outline = "4px solid #f59e0b"; // Amber color to match edit theme
+
+                        setTimeout(() => {
+                            mediaElement.style.outline = prevOutline || "2px dashed #3b82f6";
+
+                            const tagName = mediaElement.tagName.toLowerCase();
+                            const isMedia = tagName !== 'img';
+                            const currentSrc = mediaElement.src || mediaElement.getAttribute('src');
+
+                            let promptMessage = isMedia
+                                ? "Enter new Video/Iframe URL:"
+                                : "Enter new Image URL, OR a Video URL (YouTube, Vimeo, MP4) to replace this image:";
+
+                            const input = prompt(promptMessage, currentSrc);
+
                             if (input) {
                                 if (isVideoUrl(input)) {
-                                    // Replace img with video container
+                                    // Replace media/img with new video container
                                     const container = doc.createElement("div");
-                                    container.style.width = img.width ? `${img.width}px` : "100%";
-                                    container.style.height = img.height
-                                        ? `${img.height}px`
-                                        : "auto";
+                                    container.style.width = mediaElement.offsetWidth ? `${mediaElement.offsetWidth}px` : "100%";
+                                    container.style.height = mediaElement.offsetHeight ? `${mediaElement.offsetHeight}px` : "auto";
                                     container.style.minHeight = "200px";
                                     container.innerHTML = getVideoEmbed(input);
-                                    img.parentNode.replaceChild(container, img);
-                                } else {
-                                    // Just update image
-                                    img.src = input;
-                                    img.removeAttribute("srcset");
+                                    mediaElement.parentNode.replaceChild(container, mediaElement);
+                                } else if (tagName === 'img') {
+                                    mediaElement.src = input;
+                                    mediaElement.removeAttribute("srcset");
+                                } else if (tagName === 'iframe' || tagName === 'video') {
+                                    mediaElement.src = input;
                                 }
                             }
-                        };
+                            // Restore outline style implies we need to make sure we don't leave it Amber
+                            if (editMode) mediaElement.style.outline = "2px dashed #3b82f6";
+                        }, 50); // Short delay to allow visual feedback
+
+                        return;
                     }
+
+                    // If it's a link but NOT media, we want to prevent navigation but allow text editing (caret)
+                    if (linkElement) {
+                        // Prevent navigation
+                        e.preventDefault();
+                        // We allow bubbling so contenteditable handles the caret position
+                    }
+                };
+
+                // Add or Remove styles and listeners
+                if (editMode) {
+                    doc.body.setAttribute("contenteditable", "true");
+
+                    // Add styles to indicate editable elements
+                    // specific styles for media to show they are interactive
+                    const styleId = "editor-styles";
+                    if (!doc.getElementById(styleId)) {
+                        const style = doc.createElement("style");
+                        style.id = styleId;
+                        style.innerHTML = `
+                            img:hover, video:hover, iframe:hover { outline: 4px solid #3b82f6 !important; cursor: pointer !important; transition: outline 0.1s; }
+                            img, video, iframe { outline: 2px dashed #3b82f6; box-sizing: border-box; }
+                            a { cursor: text !important; } 
+                        `;
+                        doc.head.appendChild(style);
+                    }
+
+                    // Attach Capture Phase listener to body to intercept everything
+                    doc.body.addEventListener('click', handleEditClick, true);
+
                 } else {
                     doc.body.removeAttribute("contenteditable");
-                    const images = doc.getElementsByTagName("img");
-                    for (let img of images) {
-                        img.style.cursor = "";
-                        img.style.border = "";
-                        img.onclick = null;
-                    }
+
+                    // Remove listeners
+                    doc.body.removeEventListener('click', handleEditClick, true);
+
+                    // Remove styles
+                    const style = doc.getElementById("editor-styles");
+                    if (style) style.remove();
+
+                    // Cleanup any inline styles we might have set via JS previously (though we used CSS mostly now)
+                    // The CSS injection method is cleaner than iterating and setting inline styles.
                 }
             } catch (err) {
-                // Silent catch for cross-origin potential issues, though srcDoc mitigates most
                 console.warn("Edit mode toggle warning:", err);
             }
         };
@@ -176,52 +297,43 @@ export default function WebsiteViewer() {
         if (iframeContent) {
             applyEditMode();
         }
-    }, [editMode, iframeContent]);
+    }, [editMode, iframeContent, editModeVersion]);
 
     const handleIframeLoad = () => {
-        // Re-apply edit mode settings when iframe finishes loading (if still in edit mode)
+        // When iframe loads, if edit mode is active, we need to re-inject styles and listeners
         if (editMode && iframeRef.current) {
-            // We trigger a re-run of the effect by touching a dummy state or just calling logic? 
-            // Best is to let the effect run, but for cleanliness:
-            // The effect depends on 'editMode' and 'iframeContent'. 
-            // 'iframeContent' doesn't change on load, but the DOM does.
-            // So we manually re-invoke the clean/dirty logic if needed.
-            // Actually, the effect runs on mount/update. 
-            // We can just manually call the logic here to be safe.
-            // For now, let's trust the user toggles or the effect runs. 
-            // Use setTimeout to allow DOM to settle.
-            setTimeout(() => {
-                // Logic repeated from effect for safety on reload
-                // (Simplified version)
-                try {
-                    const doc = iframeRef.current.contentDocument || iframeRef.current.contentWindow.document;
-                    if (doc) {
-                        doc.body.setAttribute("contenteditable", "true");
-                        const images = doc.getElementsByTagName("img");
-                        for (let img of images) {
-                            img.style.cursor = "pointer";
-                            img.style.border = "2px dashed #3b82f6";
-                            img.onclick = (e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                const input = prompt("Update Image/Video URL:", img.src);
-                                if (input) {
-                                    if (isVideoUrl(input)) {
-                                        const d = doc.createElement('div');
-                                        d.innerHTML = getVideoEmbed(input);
-                                        img.parentNode.replaceChild(d, img);
-                                    } else {
-                                        img.src = input;
-                                        img.removeAttribute("srcset");
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } catch (e) { }
-            }, 500);
+            // Re-trigger the effect logic basically.
+            // We can do this by toggling a dummy state or just extracting the logic.
+            // Since the logic is inside the effect, we can just let the user toggle off/on OR better,
+            // we can't easily access the internal function of the effect.
+            // Best approach: Toggle edit mode off and on? No that causes flicker.
+            // Let's just update the timestamp or something to force effect re-run?
+            // Actually, the previous `setTimeout` approach was okay but verbose. 
+            // Let's use a cleaner approach: dispatch a custom event or just trust the user to toggle if needed?
+            // User wants "lag free". 
+            // Let's make `applyEditMode` accessible or just copy the logic?
+            // Actually, we can just trigger a re-render or add a "key" to the effect dependency?
+            // Adding `iframeRef.current` to dependency array doesn't work well.
+
+            // Simplest Robust Fix: Just explicitly call the initialization again.
+            // But we can't calls `applyEditMode` from here as it's scoped.
+            // Let's move `applyEditMode` out or just duplicate the "enable" logic briefly.
+            // OR, better: We can set a "version" state that increments on load.
+
+            // For now, let's keep it simple: The effect uses `iframeContent`. 
+            // When `iframeContent` changes, the effect runs! 
+            // Wait, `iframeContent` IS the HTML. So when it changes, the effect runs and re-applies.
+            // `onLoad` fires when that content is fully rendered.
+            // The effect might run BEFORE the DOM is ready for listeners? 
+            // Yes, `useEffect` runs after render, but for an iframe, `srcDoc` might take a moment to parse.
+            // So `handleIframeLoad` IS valuable.
+
+            // Let's just force the effect to run by updating a version.
+            setEditModeVersion(v => v + 1);
         }
     };
+    // Add editModeVersion to effect dependency
+
 
     return (
         <div className="w-full max-w-7xl mx-auto p-4 flex flex-col gap-6">
@@ -272,8 +384,8 @@ export default function WebsiteViewer() {
                         <button
                             onClick={() => setEditMode(!editMode)}
                             className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all border ${editMode
-                                    ? 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700'
-                                    : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600'
+                                ? 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700'
+                                : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600'
                                 }`}
                         >
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
@@ -287,6 +399,14 @@ export default function WebsiteViewer() {
                         >
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
                             View
+                        </button>
+                        <button
+                            onClick={handleCopyReact}
+                            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider bg-[#61DAFB] text-slate-900 hover:bg-[#4bc6e8] transition-all border border-transparent"
+                            title="Copy as React Component"
+                        >
+                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm0 11.204c.48-1.554 1.486-2.923 2.768-3.765-.479-.304-1.045-.439-1.636-.339-1.284.218-2.31 1.258-2.502 2.544-.094.63.078 1.252.417 1.761-1.353-.872-2.365-2.28-2.61-3.953-.165-1.127.145-2.259.851-3.123 1.104-1.35 2.922-1.895 4.545-1.36.924.305 1.705.908 2.219 1.686 1.408 2.132-1.93 4.234-4.053 6.549zm1.096 2.053c-.302.268-.691.383-1.096.383-1.049 0-1.875-.765-1.875-1.748 0-.324.095-.629.259-.894 1.17 1.579 2.096 1.954 2.712 2.259zm4.279-4.789c.394.686.533 1.493.385 2.296-.289 1.564-1.583 2.775-3.13 2.946-1.583.175-3.053-.615-3.804-1.896-.707-1.206-.632-2.738.169-3.885.506-.725 1.246-1.18 2.073-1.277 1.62-.191 3.129.845 3.823 2.337.209.447.348.922.484 1.479zm-4.722 8.529c-1.379.74-2.128 2.264-1.84 3.766.191.996.864 1.815 1.766 2.186 1.346.554 2.909.07 3.824-1.077.587-.736.812-1.68.618-2.597-.132-.625-.436-1.179-.854-1.619-1.208 1.428-2.372.585-3.514-.659zm5.325-1.488c.844.757 1.391 1.782 1.491 2.915.111 1.25-.332 2.455-1.196 3.296-1.299 1.265-3.321 1.458-4.871.496-1.018-.631-1.691-1.688-1.83-2.868-.088-.737.078-1.465.419-2.074 1.201.767 2.378-.458 3.551-1.666.97.234 1.766.526 2.436.901z" /></svg>
+                            React
                         </button>
                         <button
                             onClick={handleDownload}
