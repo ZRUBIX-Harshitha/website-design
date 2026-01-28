@@ -23,14 +23,43 @@ export async function GET(request) {
         const html = await response.text();
         const $ = cheerio.load(html);
 
-        // API Context: Use the final URL from the response to handle redirects correctly.
-        // This is critical for relative assets to load from the correct path.
-        const finalUrl = response.url || url;
+        // Helper to Convert relative URLs to absolute
+        const makeAbsolute = (link) => {
+            try {
+                return new URL(link, url).href;
+            } catch (e) {
+                return link;
+            }
+        };
+
+        // Rewrite standard attributes
+        $('img, script, iframe').each((i, el) => {
+            const src = $(el).attr('src');
+            if (src) $(el).attr('src', makeAbsolute(src));
+        });
+
+        $('link, a').each((i, el) => {
+            const href = $(el).attr('href');
+            if (href) $(el).attr('href', makeAbsolute(href));
+        });
+
+        // Simplistic srcset rewriting
+        $('img').each((i, el) => {
+            const srcset = $(el).attr('srcset');
+            if (srcset) {
+                const newSrcset = srcset.split(',').map(part => {
+                    const [src, desc] = part.trim().split(/\s+/);
+                    if (src) return `${makeAbsolute(src)} ${desc || ''}`;
+                    return part;
+                }).join(', ');
+                $(el).attr('srcset', newSrcset);
+            }
+        })
 
         // Inject anti-frame-busting script and base tag
-        // We use the base tag to resolve all relative URLs automatically, ensuring high fidelity.
+        // We try to prevent the site from breaking out of the iframe
         $('head').prepend(`
-        <base href="${finalUrl}" />
+        <base href="${url}" />
         <script>
             // Anti-frame-busting
             try {
@@ -47,7 +76,6 @@ export async function GET(request) {
             },
         });
     } catch (error) {
-        console.error("Proxy Error:", error);
         return NextResponse.json({ error: 'Failed to process request', details: error.message }, { status: 500 });
     }
 }

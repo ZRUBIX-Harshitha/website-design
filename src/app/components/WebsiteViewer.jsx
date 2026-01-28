@@ -7,9 +7,9 @@ export default function WebsiteViewer() {
     const [iframeContent, setIframeContent] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     const [editMode, setEditMode] = useState(false);
-    const [editModeVersion, setEditModeVersion] = useState(0);
     const [showCodeModal, setShowCodeModal] = useState(false);
     const [generatedCode, setGeneratedCode] = useState("");
+    const [viewport, setViewport] = useState("desktop"); // 'desktop', 'tablet', 'mobile'
     const iframeRef = useRef(null);
 
     // Helper: Detect if a string is a video URL
@@ -191,32 +191,18 @@ ${htmlContent.replace(/`/g, "\\`").replace(/\${/g, "\\${")}
                 const doc = iframe.contentDocument || iframe.contentWindow.document;
                 if (!doc) return;
 
-                // Define the click handler using Event Delegation
-                // This is more performant (one listener) and robust (catches dynamic elements and clicks inside links)
-                const handleEditClick = (e) => {
-                    const target = e.target;
+                if (editMode) {
+                    doc.body.setAttribute("contenteditable", "true");
 
-                    // Check if clicked element is media or wrapped in media
-                    // We also check closet to handle clicks on elements inside an anchor that wraps an image
-                    const mediaElement = target.closest('img, video, iframe');
-                    const linkElement = target.closest('a');
+                    // Helper for click handling
+                    const attachClickHandler = (element, isMedia = false) => {
+                        element.style.cursor = "pointer";
+                        element.style.outline = "2px dashed #3b82f6";
+                        element.onclick = (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
 
-                    // If it's a media element, hijack the click for editing
-                    if (mediaElement) {
-                        e.preventDefault();
-                        e.stopPropagation();
-
-                        // Highlight briefly to show selection
-                        const prevOutline = mediaElement.style.outline;
-                        mediaElement.style.outline = "4px solid #f59e0b"; // Amber color to match edit theme
-
-                        setTimeout(() => {
-                            mediaElement.style.outline = prevOutline || "2px dashed #3b82f6";
-
-                            const tagName = mediaElement.tagName.toLowerCase();
-                            const isMedia = tagName !== 'img';
-                            const currentSrc = mediaElement.src || mediaElement.getAttribute('src');
-
+                            let currentSrc = element.src || element.getAttribute('src');
                             let promptMessage = isMedia
                                 ? "Enter new Video/Iframe URL:"
                                 : "Enter new Image URL, OR a Video URL (YouTube, Vimeo, MP4) to replace this image:";
@@ -225,68 +211,50 @@ ${htmlContent.replace(/`/g, "\\`").replace(/\${/g, "\\${")}
 
                             if (input) {
                                 if (isVideoUrl(input)) {
-                                    // Replace media/img with new video container
+                                    // Create new video container
                                     const container = doc.createElement("div");
-                                    container.style.width = mediaElement.offsetWidth ? `${mediaElement.offsetWidth}px` : "100%";
-                                    container.style.height = mediaElement.offsetHeight ? `${mediaElement.offsetHeight}px` : "auto";
+                                    container.style.width = element.offsetWidth ? `${element.offsetWidth}px` : "100%";
+                                    container.style.height = element.offsetHeight ? `${element.offsetHeight}px` : "auto";
                                     container.style.minHeight = "200px";
                                     container.innerHTML = getVideoEmbed(input);
-                                    mediaElement.parentNode.replaceChild(container, mediaElement);
-                                } else if (tagName === 'img') {
-                                    mediaElement.src = input;
-                                    mediaElement.removeAttribute("srcset");
-                                } else if (tagName === 'iframe' || tagName === 'video') {
-                                    mediaElement.src = input;
+                                    element.parentNode.replaceChild(container, element);
+                                } else if (!isMedia) {
+                                    // Just update image src
+                                    element.src = input;
+                                    element.removeAttribute("srcset");
+                                } else if (element.tagName.toLowerCase() === 'iframe') {
+                                    element.src = input;
                                 }
                             }
-                            // Restore outline style implies we need to make sure we don't leave it Amber
-                            if (editMode) mediaElement.style.outline = "2px dashed #3b82f6";
-                        }, 50); // Short delay to allow visual feedback
+                        };
+                    };
 
-                        return;
-                    }
+                    // Add handlers to images
+                    const images = doc.getElementsByTagName("img");
+                    for (let img of images) attachClickHandler(img);
 
-                    // If it's a link but NOT media, we want to prevent navigation but allow text editing (caret)
-                    if (linkElement) {
-                        // Prevent navigation
-                        e.preventDefault();
-                        // We allow bubbling so contenteditable handles the caret position
-                    }
-                };
+                    // Add handlers to iframes (potential videos)
+                    const iframes = doc.getElementsByTagName("iframe");
+                    for (let ifr of iframes) attachClickHandler(ifr, true);
 
-                // Add or Remove styles and listeners
-                if (editMode) {
-                    doc.body.setAttribute("contenteditable", "true");
-
-                    // Add styles to indicate editable elements
-                    // specific styles for media to show they are interactive
-                    const styleId = "editor-styles";
-                    if (!doc.getElementById(styleId)) {
-                        const style = doc.createElement("style");
-                        style.id = styleId;
-                        style.innerHTML = `
-                            img:hover, video:hover, iframe:hover { outline: 4px solid #3b82f6 !important; cursor: pointer !important; transition: outline 0.1s; }
-                            img, video, iframe { outline: 2px dashed #3b82f6; box-sizing: border-box; }
-                            a { cursor: text !important; } 
-                        `;
-                        doc.head.appendChild(style);
-                    }
-
-                    // Attach Capture Phase listener to body to intercept everything
-                    doc.body.addEventListener('click', handleEditClick, true);
+                    // Add handlers to videos
+                    const videos = doc.getElementsByTagName("video");
+                    for (let vid of videos) attachClickHandler(vid, true);
 
                 } else {
                     doc.body.removeAttribute("contenteditable");
 
-                    // Remove listeners
-                    doc.body.removeEventListener('click', handleEditClick, true);
+                    const cleanup = (collection) => {
+                        for (let el of collection) {
+                            el.style.cursor = "";
+                            el.style.outline = "";
+                            el.onclick = null;
+                        }
+                    };
 
-                    // Remove styles
-                    const style = doc.getElementById("editor-styles");
-                    if (style) style.remove();
-
-                    // Cleanup any inline styles we might have set via JS previously (though we used CSS mostly now)
-                    // The CSS injection method is cleaner than iterating and setting inline styles.
+                    cleanup(doc.getElementsByTagName("img"));
+                    cleanup(doc.getElementsByTagName("iframe"));
+                    cleanup(doc.getElementsByTagName("video"));
                 }
             } catch (err) {
                 console.warn("Edit mode toggle warning:", err);
@@ -297,43 +265,52 @@ ${htmlContent.replace(/`/g, "\\`").replace(/\${/g, "\\${")}
         if (iframeContent) {
             applyEditMode();
         }
-    }, [editMode, iframeContent, editModeVersion]);
+    }, [editMode, iframeContent]);
 
     const handleIframeLoad = () => {
-        // When iframe loads, if edit mode is active, we need to re-inject styles and listeners
+        // Re-apply edit mode settings when iframe finishes loading (if still in edit mode)
         if (editMode && iframeRef.current) {
-            // Re-trigger the effect logic basically.
-            // We can do this by toggling a dummy state or just extracting the logic.
-            // Since the logic is inside the effect, we can just let the user toggle off/on OR better,
-            // we can't easily access the internal function of the effect.
-            // Best approach: Toggle edit mode off and on? No that causes flicker.
-            // Let's just update the timestamp or something to force effect re-run?
-            // Actually, the previous `setTimeout` approach was okay but verbose. 
-            // Let's use a cleaner approach: dispatch a custom event or just trust the user to toggle if needed?
-            // User wants "lag free". 
-            // Let's make `applyEditMode` accessible or just copy the logic?
-            // Actually, we can just trigger a re-render or add a "key" to the effect dependency?
-            // Adding `iframeRef.current` to dependency array doesn't work well.
-
-            // Simplest Robust Fix: Just explicitly call the initialization again.
-            // But we can't calls `applyEditMode` from here as it's scoped.
-            // Let's move `applyEditMode` out or just duplicate the "enable" logic briefly.
-            // OR, better: We can set a "version" state that increments on load.
-
-            // For now, let's keep it simple: The effect uses `iframeContent`. 
-            // When `iframeContent` changes, the effect runs! 
-            // Wait, `iframeContent` IS the HTML. So when it changes, the effect runs and re-applies.
-            // `onLoad` fires when that content is fully rendered.
-            // The effect might run BEFORE the DOM is ready for listeners? 
-            // Yes, `useEffect` runs after render, but for an iframe, `srcDoc` might take a moment to parse.
-            // So `handleIframeLoad` IS valuable.
-
-            // Let's just force the effect to run by updating a version.
-            setEditModeVersion(v => v + 1);
+            // We trigger a re-run of the effect by touching a dummy state or just calling logic? 
+            // Best is to let the effect run, but for cleanliness:
+            // The effect depends on 'editMode' and 'iframeContent'. 
+            // 'iframeContent' doesn't change on load, but the DOM does.
+            // So we manually re-invoke the clean/dirty logic if needed.
+            // Actually, the effect runs on mount/update. 
+            // We can just manually call the logic here to be safe.
+            // For now, let's trust the user toggles or the effect runs. 
+            // Use setTimeout to allow DOM to settle.
+            setTimeout(() => {
+                // Logic repeated from effect for safety on reload
+                // (Simplified version)
+                try {
+                    const doc = iframeRef.current.contentDocument || iframeRef.current.contentWindow.document;
+                    if (doc) {
+                        doc.body.setAttribute("contenteditable", "true");
+                        const images = doc.getElementsByTagName("img");
+                        for (let img of images) {
+                            img.style.cursor = "pointer";
+                            img.style.border = "2px dashed #3b82f6";
+                            img.onclick = (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const input = prompt("Update Image/Video URL:", img.src);
+                                if (input) {
+                                    if (isVideoUrl(input)) {
+                                        const d = doc.createElement('div');
+                                        d.innerHTML = getVideoEmbed(input);
+                                        img.parentNode.replaceChild(d, img);
+                                    } else {
+                                        img.src = input;
+                                        img.removeAttribute("srcset");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (e) { }
+            }, 500);
         }
     };
-    // Add editModeVersion to effect dependency
-
 
     return (
         <div className="w-full max-w-7xl mx-auto p-4 flex flex-col gap-6">
@@ -381,6 +358,32 @@ ${htmlContent.replace(/`/g, "\\`").replace(/\${/g, "\\${")}
 
                     {/* Action Buttons */}
                     <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                        {/* Viewport Toggles */}
+                        <div className="flex items-center bg-slate-200 dark:bg-slate-700 rounded-lg p-1 mr-2">
+                            <button
+                                onClick={() => setViewport("mobile")}
+                                className={`p-1.5 rounded-md transition-all ${viewport === 'mobile' ? 'bg-white dark:bg-slate-600 text-blue-600 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                                title="Mobile View"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                            </button>
+                            <button
+                                onClick={() => setViewport("tablet")}
+                                className={`p-1.5 rounded-md transition-all ${viewport === 'tablet' ? 'bg-white dark:bg-slate-600 text-blue-600 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                                title="Tablet View"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                            </button>
+                            <button
+                                onClick={() => setViewport("desktop")}
+                                className={`p-1.5 rounded-md transition-all ${viewport === 'desktop' ? 'bg-white dark:bg-slate-600 text-blue-600 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                                title="Desktop View"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                            </button>
+                        </div>
+                        <div className="h-6 w-px bg-slate-300 dark:bg-slate-600 mx-1"></div>
+
                         <button
                             onClick={() => setEditMode(!editMode)}
                             className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all border ${editMode
@@ -420,77 +423,107 @@ ${htmlContent.replace(/`/g, "\\`").replace(/\${/g, "\\${")}
                 </div>
 
                 {/* Browser Content */}
-                <div className="relative h-[700px] w-full bg-white dark:bg-gray-100">
-                    {iframeContent ? (
-                        <iframe
-                            ref={iframeRef}
-                            srcDoc={iframeContent}
-                            className="w-full h-full border-0 block"
-                            title="Site Preview"
-                            onLoad={handleIframeLoad}
-                            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
-                        />
-                    ) : (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-slate-50 dark:bg-slate-900/50">
-                            <svg className="w-16 h-16 mb-4 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg>
-                            <p className="text-lg font-medium">Ready to browse</p>
-                            <p className="text-sm opacity-75">Enter a URL above to start</p>
-                        </div>
-                    )}
+                <div className={`relative w-full bg-slate-50 dark:bg-slate-900/50 flex justify-center overflow-y-auto overflow-x-hidden transition-all duration-300 ${viewport !== 'desktop' ? 'py-12 h-[850px]' : 'h-[700px]'}`}>
 
-                    {/* Edit Mode Indicator (Floating) */}
-                    {editMode && (
-                        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-amber-500/90 text-white text-sm font-medium rounded-full shadow-lg backdrop-blur-sm pointer-events-none flex items-center gap-2 z-10">
-                            <span className="relative flex h-3 w-3">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
-                            </span>
-                            Editing Active: Click text to edit, click images to replace/add video.
-                        </div>
-                    )}
-                </div>
-            </div>
+                    {/* Device Frame */}
+                    <div className={`relative transition-all duration-500 ease-in-out bg-white dark:bg-gray-100 shrink-0 ${viewport === 'mobile'
+                        ? 'w-[375px] h-[812px] rounded-[3rem] border-[14px] border-gray-900 shadow-2xl ring-1 ring-gray-900/5'
+                        : viewport === 'tablet'
+                            ? 'w-[768px] h-[1024px] rounded-[2rem] border-[12px] border-gray-900 shadow-2xl ring-1 ring-gray-900/5'
+                            : 'w-full h-full rounded-none border-0'
+                        }`}>
+                        {/* Mobile Specific Elements (Notch & Buttons) */}
+                        {viewport === 'mobile' && (
+                            <>
+                                {/* Notch */}
+                                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-7 bg-gray-900 rounded-b-2xl z-20 pointer-events-none"></div>
+                                {/* Side Buttons */}
+                                <div className="absolute -left-[17px] top-28 w-[3px] h-7 bg-gray-800 rounded-l-md shadow-sm"></div>
+                                <div className="absolute -left-[17px] top-44 w-[3px] h-14 bg-gray-800 rounded-l-md shadow-sm"></div>
+                                <div className="absolute -right-[17px] top-44 w-[3px] h-20 bg-gray-800 rounded-r-md shadow-sm"></div>
+                            </>
+                        )}
 
-            {/* Code Viewer Modal */}
-            {showCodeModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col ring-1 ring-white/10">
-                        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-                            <h3 className="text-lg font-bold text-gray-800 dark:text-white flex items-center gap-2">
-                                <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
-                                Source Code
-                            </h3>
-                            <div className="flex items-center gap-2">
-                                <button
-                                    onClick={() => {
-                                        navigator.clipboard.writeText(generatedCode);
-                                        alert("Code copied to clipboard!");
-                                    }}
-                                    className="px-3 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-lg transition-colors"
-                                >
-                                    Copy All
-                                </button>
-                                <button
-                                    onClick={() => setShowCodeModal(false)}
-                                    className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 text-slate-500 hover:text-red-500 rounded-lg transition-colors"
-                                >
-                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                                </button>
-                            </div>
-                        </div>
-                        <div className="flex-1 overflow-auto p-4 bg-slate-50 dark:bg-[#0d1117]">
-                            <pre className="text-xs sm:text-sm font-mono text-slate-700 dark:text-slate-300 whitespace-pre-wrap break-all">
-                                {generatedCode}
-                            </pre>
-                        </div>
-                        <div className="p-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-slate-800/50 text-right">
-                            <span className="text-xs text-slate-500">
-                                {generatedCode.length} chars
-                            </span>
+                        {/* Tablet Specific Elements (Camera) */}
+                        {viewport === 'tablet' && (
+                            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2 h-2 mt-1.5 bg-gray-800 rounded-full z-20 pointer-events-none"></div>
+                        )}
+
+                        {/* Inner Content (The Screen) */}
+                        <div className={`relative w-full h-full overflow-hidden bg-white dark:bg-gray-100 ${viewport === 'mobile' ? 'rounded-[2.2rem]' : viewport === 'tablet' ? 'rounded-[1.4rem]' : ''}`}>
+
+                            {iframeContent ? (
+                                <iframe
+                                    ref={iframeRef}
+                                    srcDoc={iframeContent}
+                                    className="w-full h-full border-0 block"
+                                    title="Site Preview"
+                                    onLoad={handleIframeLoad}
+                                    sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+                                />
+                            ) : (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-slate-50 dark:bg-slate-900/50">
+                                    <svg className="w-16 h-16 mb-4 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg>
+                                    <p className="text-lg font-medium">Ready to browse</p>
+                                    <p className="text-sm opacity-75">Enter a URL above to start</p>
+                                </div>
+                            )}
+
+                            {/* Edit Mode Indicator (Floating) */}
+                            {editMode && (
+                                <div className="absolute bottom-10 left-1/2 -translate-x-1/2 px-4 py-2 bg-amber-500/90 text-white text-sm font-medium rounded-full shadow-lg backdrop-blur-sm pointer-events-none flex items-center gap-2 z-10 w-max max-w-[90%]">
+                                    <span className="relative flex h-3 w-3 shrink-0">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
+                                    </span>
+                                    <span className="truncate">Editing Active</span>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
-            )}
+
+                {/* Code Viewer Modal */}
+                {showCodeModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-in fade-in duration-200">
+                        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col ring-1 ring-white/10">
+                            <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                                <h3 className="text-lg font-bold text-gray-800 dark:text-white flex items-center gap-2">
+                                    <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+                                    Source Code
+                                </h3>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(generatedCode);
+                                            alert("Code copied to clipboard!");
+                                        }}
+                                        className="px-3 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 rounded-lg transition-colors"
+                                    >
+                                        Copy All
+                                    </button>
+                                    <button
+                                        onClick={() => setShowCodeModal(false)}
+                                        className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 text-slate-500 hover:text-red-500 rounded-lg transition-colors"
+                                    >
+                                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="flex-1 overflow-auto p-4 bg-slate-50 dark:bg-[#0d1117]">
+                                <pre className="text-xs sm:text-sm font-mono text-slate-700 dark:text-slate-300 whitespace-pre-wrap break-all">
+                                    {generatedCode}
+                                </pre>
+                            </div>
+                            <div className="p-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-slate-800/50 text-right">
+                                <span className="text-xs text-slate-500">
+                                    {generatedCode.length} chars
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

@@ -1,7 +1,3 @@
-"use client";
-
-
-import React from "react";
 import WebsiteViewer from "./components/WebsiteViewer";
 
 export default function Home() {
@@ -22,12 +18,6 @@ export default function Home() {
       <footer className="mt-16 text-sm text-gray-500 dark:text-gray-400">
         <p>&copy; {new Date().getFullYear()} Website Preview Tool. Designed for Professionals.</p>
       </footer>
-
-
-
-
     </main>
-
-
   );
 }
