@@ -403,14 +403,7 @@ ${htmlContent.replace(/`/g, "\\`").replace(/\${/g, "\\${")}
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
                             View
                         </button>
-                        <button
-                            onClick={handleCopyReact}
-                            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider bg-[#61DAFB] text-slate-900 hover:bg-[#4bc6e8] transition-all border border-transparent"
-                            title="Copy as React Component"
-                        >
-                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm0 11.204c.48-1.554 1.486-2.923 2.768-3.765-.479-.304-1.045-.439-1.636-.339-1.284.218-2.31 1.258-2.502 2.544-.094.63.078 1.252.417 1.761-1.353-.872-2.365-2.28-2.61-3.953-.165-1.127.145-2.259.851-3.123 1.104-1.35 2.922-1.895 4.545-1.36.924.305 1.705.908 2.219 1.686 1.408 2.132-1.93 4.234-4.053 6.549zm1.096 2.053c-.302.268-.691.383-1.096.383-1.049 0-1.875-.765-1.875-1.748 0-.324.095-.629.259-.894 1.17 1.579 2.096 1.954 2.712 2.259zm4.279-4.789c.394.686.533 1.493.385 2.296-.289 1.564-1.583 2.775-3.13 2.946-1.583.175-3.053-.615-3.804-1.896-.707-1.206-.632-2.738.169-3.885.506-.725 1.246-1.18 2.073-1.277 1.62-.191 3.129.845 3.823 2.337.209.447.348.922.484 1.479zm-4.722 8.529c-1.379.74-2.128 2.264-1.84 3.766.191.996.864 1.815 1.766 2.186 1.346.554 2.909.07 3.824-1.077.587-.736.812-1.68.618-2.597-.132-.625-.436-1.179-.854-1.619-1.208 1.428-2.372.585-3.514-.659zm5.325-1.488c.844.757 1.391 1.782 1.491 2.915.111 1.25-.332 2.455-1.196 3.296-1.299 1.265-3.321 1.458-4.871.496-1.018-.631-1.691-1.688-1.83-2.868-.088-.737.078-1.465.419-2.074 1.201.767 2.378-.458 3.551-1.666.97.234 1.766.526 2.436.901z" /></svg>
-                            React
-                        </button>
+
                         <button
                             onClick={handleDownload}
                             className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider bg-emerald-600 text-white hover:bg-emerald-700 transition-all shadow-md shadow-emerald-600/20"

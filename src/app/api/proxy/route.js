@@ -78,4 +78,4 @@ export async function GET(request) {
     } catch (error) {
         return NextResponse.json({ error: 'Failed to process request', details: error.message }, { status: 500 });
     }
-}
+}
